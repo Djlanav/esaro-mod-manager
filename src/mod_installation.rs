@@ -1,7 +1,8 @@
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::Mutex;
+use std::thread;
 
 pub struct Mod {
    pub name: String,
@@ -19,10 +20,10 @@ impl Mod {
     }
 }
 
-async fn create_paths_vector(mods: Arc<Mutex<Vec<PathBuf>>>) -> Vec<String> {
+fn create_paths_vector(mods: Arc<Mutex<Vec<PathBuf>>>) -> Vec<String> {
     let mut paths_vector: Vec<String> = Vec::new();
 
-    let mods_iter = mods.lock().await;
+    let mods_iter = mods.lock().unwrap();
 
     for addon in mods_iter.iter() {
         paths_vector.push(addon.display().to_string());
@@ -32,10 +33,10 @@ async fn create_paths_vector(mods: Arc<Mutex<Vec<PathBuf>>>) -> Vec<String> {
     paths_vector
 }
 
-async fn create_files_vector(mods: Arc<Mutex<Vec<PathBuf>>>) -> Vec<File> {
+fn create_files_vector(mods: Arc<Mutex<Vec<PathBuf>>>) -> Vec<File> {
     let mut files_vector: Vec<File> = Vec::new();
 
-    let mods_iter = mods.lock().await;
+    let mods_iter = mods.lock().unwrap();
 
     for addon in mods_iter.iter() {
         let file = File::open(addon).unwrap();
@@ -47,24 +48,24 @@ async fn create_files_vector(mods: Arc<Mutex<Vec<PathBuf>>>) -> Vec<File> {
     files_vector
 }
 
-pub async fn create_zip_vectors(mods: Arc<Mutex<Vec<PathBuf>>>) -> (Vec<File>, Vec<String>) {
+pub fn create_zip_vectors(mods: Arc<Mutex<Vec<PathBuf>>>) -> (Vec<File>, Vec<String>) {
     let mods_path = mods.clone();
     let mods_file = mods.clone();
 
-    let create_paths = tokio::spawn(async {
+    let create_paths = thread::spawn(|| {
        let paths_vector = create_paths_vector(mods_path);
 
-        paths_vector.await
+        paths_vector
     });
 
-    let create_files = tokio::spawn(async {
+    let create_files = thread::spawn(|| {
        let files_vector = create_files_vector(mods_file);
 
-        files_vector.await
+        files_vector
     });
 
-    let paths = create_paths.await.expect("Paths task panicked!");
-    let files = create_files.await.expect("Files task panicked!");
+    let paths = create_paths.join().unwrap();
+    let files = create_files.join().unwrap();
 
     (files, paths)
 }

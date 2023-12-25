@@ -1,7 +1,7 @@
 mod mod_installation;
 
 use std::error::Error;
-use std::fs;
+use std::{fs, thread};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use eframe::egui::{Color32, Context, RichText};
 use eframe::{egui, Frame};
 use mod_installation::Mod;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 
 const SAVED_DIRECTORY: &str = "7daystodie_path.txt";
 
@@ -115,23 +115,24 @@ impl eframe::App for ModManager {
                     None => return
                 };
 
-                let (mods_tx, mut mods_rx) = tokio::sync::mpsc::channel(300);
+                let (mods_tx, mut mods_rx) = std::sync::mpsc::channel();
 
                 let mod_paths_rc = Arc::new(Mutex::new(mod_paths));
                 let mods_rc_clone = mod_paths_rc.clone();
 
-                self.runtime.spawn(async move {
-                    let data_to_send = mod_installation::create_zip_vectors(mods_rc_clone).await;
+                // Vector creation thread
+                thread::spawn(move || {
+                   let vectors = mod_installation::create_zip_vectors(mods_rc_clone);
 
-                    if let Err(e) = mods_tx.send(data_to_send).await {
-                        panic!("An error occurred in sending: {e}");
-                    }
+                    mods_tx.send(vectors).expect("Failure in send!");
                 });
-                let (zip_files, zip_paths) = mods_rx.blocking_recv().unwrap();
 
+                // Extraction thread
                 let dir_clone = self.directory_string.clone();
-                std::thread::spawn(move || {
+                thread::spawn(move || {
+                    let (zip_files, _zip_paths) = mods_rx.recv().unwrap();
                     mod_installation::extract_zips(zip_files, dir_clone);
+
                 });
             }
         });
