@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 
-pub struct Mod {
+/* pub struct Mod {
    pub name: String,
    pub version: String,
    pub author: String
@@ -18,7 +18,8 @@ impl Mod {
             author
         }
     }
-}
+} */
+
 
 fn create_paths_vector(mods: Arc<Mutex<Vec<PathBuf>>>) -> Vec<String> {
     let mut paths_vector: Vec<String> = Vec::new();
