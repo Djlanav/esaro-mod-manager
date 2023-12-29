@@ -1,4 +1,5 @@
 mod mod_installation;
+mod management;
 
 use std::error::Error;
 use std::{fs, thread};
@@ -6,10 +7,11 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use dialog::DialogBox;
-use eframe::egui::{Color32, Context, RichText};
+use eframe::egui::{Color32, Context, Rect, RichText};
 use eframe::{egui, Frame};
 use std::sync::Arc;
 use std::sync::Mutex;
+use crate::management::{ExtraWindow, MultipleDirectoriesWindow};
 
 const SAVED_DIRECTORY: &str = "7daystodie_path.txt";
 
@@ -36,8 +38,9 @@ fn load_saved_directory() -> Result<String, Box<dyn Error>> {
 }
 
 struct ModManager {
-   pub directory_string: String,
-   pub directory_found: bool
+    pub directory_string: String,
+    pub directory_found: bool,
+    pub windows: Vec<Box<dyn ExtraWindow>>,
     // mods: Vec<Mod>,
 }
 
@@ -57,7 +60,8 @@ impl ModManager {
                     String::from("Locate 7 Days to Die directory")
                 }
             },
-            directory_found: dir_found
+            directory_found: dir_found,
+            windows: Vec::new()
             // mods: Vec::new(),
         }
     }
@@ -126,14 +130,14 @@ impl eframe::App for ModManager {
                 };
 
                 let (mods_tx, mods_rx) = std::sync::mpsc::channel();
-              //  let (extracted_tx, extracted_rx) = std::sync::mpsc::channel();
+                //  let (extracted_tx, extracted_rx) = std::sync::mpsc::channel();
 
                 let mod_paths_rc = Arc::new(Mutex::new(mod_paths));
                 let mods_rc_clone = mod_paths_rc.clone();
 
                 // Vector creation thread
                 thread::spawn(move || {
-                   let vectors = mod_installation::create_zip_vectors(mods_rc_clone);
+                    let vectors = mod_installation::create_zip_vectors(mods_rc_clone);
 
                     mods_tx.send(vectors).expect("Failure in send!");
                 });
@@ -143,8 +147,20 @@ impl eframe::App for ModManager {
                 thread::spawn(move || {
                     let (zip_files, _zip_paths) = mods_rx.recv().unwrap();
                     mod_installation::extract_zips(zip_files, dir_clone);
-
                 });
+            }
+
+            ui.add_space(20.0);
+            if ui.button(RichText::new("Click me!").size(20.0)).clicked() {
+                let new_window = Box::new(MultipleDirectoriesWindow::make("Test window", ctx.clone()));
+
+                self.windows.push(new_window);
+
+                println!("Show");
+            }
+
+            for window in self.windows.iter_mut() {
+                window.show();
             }
         });
     }
