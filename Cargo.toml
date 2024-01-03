@@ -1,15 +1,15 @@
 [package]
 name = "esar_mod_manager"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 eframe = "0.24.1"
-rand = "0.8.5"
 rfd = "0.12.1"
 dialog = "0.3.0"
 zip = "0.6.6"
-reqwest = "0.11.23"
-tokio = { version = "1.35.1", features = ["full"] }
+fs_extra = "1.3.0"
+log = "0.4.20"
+crossbeam-channel = "0.5.10"

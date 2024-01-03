@@ -31,6 +31,7 @@ impl ExtraWindow for MultipleDirectoriesWindow {
     fn show(&mut self) {
         let w_handle = Window::new(self.name.to_string()).auto_sized().open(&mut self.is_visible);
 
+        println!("Showing window with name: {}", self.name);
         w_handle.show(&self.context, |ui| {
             ui.label("Hoe hoe hoe!");
         });

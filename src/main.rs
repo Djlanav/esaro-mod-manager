@@ -1,19 +1,21 @@
 mod mod_installation;
 mod management;
+mod utils;
 
 use std::error::Error;
 use std::{fs, thread};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use dialog::DialogBox;
-use eframe::egui::{Color32, Context, Rect, RichText};
+use eframe::egui::{Color32, Context, RichText};
 use eframe::{egui, Frame};
-use std::sync::Arc;
-use std::sync::Mutex;
-use crate::management::{ExtraWindow, MultipleDirectoriesWindow};
+use std::sync::mpsc;
+use crate::management::ExtraWindow;
 
 const SAVED_DIRECTORY: &str = "7daystodie_path.txt";
+const SIZE_AND_ADD_SPACE_AMOUNT: f32 = 20.0;
 
 enum MatchesGameDirectory {
     Match,
@@ -38,15 +40,16 @@ fn load_saved_directory() -> Result<String, Box<dyn Error>> {
 }
 
 struct ModManager {
-    pub directory_string: String,
-    pub directory_found: bool,
-    pub windows: Vec<Box<dyn ExtraWindow>>,
+    directory_string: String,
+    directory_found: bool,
+    windows: Vec<Box<dyn ExtraWindow>>,
+    vector_string_channels: HashMap<String, (mpsc::Sender<String>, mpsc::Receiver<String>)>
     // mods: Vec<Mod>,
 }
 
 impl ModManager {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let mut dir_found = false;
+        let dir_found;
 
         Self {
             directory_string: match load_saved_directory() {
@@ -61,7 +64,8 @@ impl ModManager {
                 }
             },
             directory_found: dir_found,
-            windows: Vec::new()
+            windows: Vec::new(),
+            vector_string_channels: HashMap::new()
             // mods: Vec::new(),
         }
     }
@@ -95,8 +99,8 @@ impl eframe::App for ModManager {
             });
 
             if self.directory_found != true {
-                ui.add_space(20.0);
-                if ui.button(RichText::new("Find game directory").size(20.0)).clicked() {
+                ui.add_space(SIZE_AND_ADD_SPACE_AMOUNT);
+                if ui.button(RichText::new("Find game directory").size(SIZE_AND_ADD_SPACE_AMOUNT)).clicked() {
                     let directory = match rfd::FileDialog::new().pick_folder() {
                         Some(dir) => dir,
                         None => return
@@ -122,42 +126,69 @@ impl eframe::App for ModManager {
                 }
             }
 
-            ui.add_space(20.0);
-            if ui.button(RichText::new("Install mod(s)").size(20.0)).clicked() {
+            // ** Beginning of "Install mods" button code **
+            ui.add_space(SIZE_AND_ADD_SPACE_AMOUNT);
+            if ui.button(RichText::new("Install mod(s)").size(SIZE_AND_ADD_SPACE_AMOUNT)).clicked() {
                 let mod_paths = match rfd::FileDialog::new().pick_files() {
                     Some(f) => f,
                     None => return
                 };
 
-                let (mods_tx, mods_rx) = std::sync::mpsc::channel();
-                //  let (extracted_tx, extracted_rx) = std::sync::mpsc::channel();
+                // let mods_vector_channel = mpsc::channel();
 
-                let mod_paths_rc = Arc::new(Mutex::new(mod_paths));
-                let mods_rc_clone = mod_paths_rc.clone();
+                let (mods_tx, mods_rx) = crossbeam_channel::unbounded();
+                // Scoped thread version
+                thread::scope(|scoped_spawner| {
+                   scoped_spawner.spawn(|| {
+                       let vectors = mod_installation::create_zip_vectors(&mod_paths);
 
-                // Vector creation thread
-                thread::spawn(move || {
-                    let vectors = mod_installation::create_zip_vectors(mods_rc_clone);
+                       mods_tx.send(vectors).expect("Failed to send data!");
+                   });
 
-                    mods_tx.send(vectors).expect("Failure in send!");
-                });
+                    // Extraction thread
+                    scoped_spawner.spawn(|| {
+                       let (zip_files, _zip_paths) = mods_rx.recv().unwrap();
 
-                // Extraction thread
-                let dir_clone = self.directory_string.clone();
-                thread::spawn(move || {
-                    let (zip_files, _zip_paths) = mods_rx.recv().unwrap();
-                    mod_installation::extract_zips(zip_files, dir_clone);
+                        dialog::Message::new("About to install mods. The mod manager may freeze for a few moments.")
+                            .title("Installing mods")
+                            .show()
+                            .unwrap();
+                       mod_installation::extract_zips(&zip_files);
+
+                        // Match block start
+                        let mod_directories_vector = match mod_installation::check_dirs(&self.directory_string) {
+                            Ok(vec) => vec,
+                            Err(e) => {
+                                let message = format!("An error occurred when moving the extracted mod folders into the main game directory.\n
+                        The error: {e}");
+
+                                utils::zips_temp_exists(|zips_path| fs::remove_dir_all(zips_path).unwrap());
+                                utils::write_to_panic_output(message.as_str()).unwrap();
+                                panic!("{}", message);
+                            }
+                        }; // Match block end
+
+                        utils::zips_temp_exists(|mods_path| fs::remove_dir_all(mods_path).unwrap());
+                        dialog::Message::new("The mods have been successfully installed.")
+                            .title("Installation status")
+                            .show()
+                            .unwrap();
+                    });
                 });
             }
+            // ** End of "Install mods" button code **
 
-            ui.add_space(20.0);
-            if ui.button(RichText::new("Click me!").size(20.0)).clicked() {
+            ui.add_space(SIZE_AND_ADD_SPACE_AMOUNT);
+            if ui.button(RichText::new("Show installed mod(s)").size(SIZE_AND_ADD_SPACE_AMOUNT)).clicked() {
+
+            }
+
+           /* ui.add_space(ADD_SPACE_AMOUNT);
+            if ui.button(RichText::new("Click me!").size(ADD_SPACE_AMOUNT)).clicked() {
                 let new_window = Box::new(MultipleDirectoriesWindow::make("Test window", ctx.clone()));
 
                 self.windows.push(new_window);
-
-                println!("Show");
-            }
+            } */
 
             for window in self.windows.iter_mut() {
                 window.show();
