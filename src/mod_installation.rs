@@ -1,14 +1,12 @@
 use std::error::Error;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::{fs, thread};
+use std::fs;
 use fs_extra::dir;
 use fs_extra::dir::CopyOptions;
 use crate::utils;
 
-/* pub struct Mod {
+pub struct Mod {
    pub name: String,
    pub version: String,
    pub author: String
@@ -22,7 +20,7 @@ impl Mod {
             author
         }
     }
-} */
+}
 
 
 fn create_paths_vector(mods: &Vec<PathBuf>) -> Vec<String> {
@@ -56,13 +54,12 @@ pub fn create_zip_vectors(mods: &Vec<PathBuf>) -> (Vec<File>, Vec<String>) {
     (files, paths)
 }
 
-pub fn check_dirs(mods_directory: &String) -> Result<Vec<String>, Box<dyn Error>> {
+pub fn check_dirs(mods_directory: &String) -> Result<(), Box<dyn Error>> {
     let zips_temp = dir::get_dir_content(".zips_temp")?;
     let copy_options = CopyOptions::default();
-    let mut dirs_vec = Vec::new();
 
     for directory in zips_temp.directories {
-        if directory.contains("Config"){
+        if directory.contains("Config") {
             println!("Skipping directory: {directory}");
             continue;
         }
@@ -76,17 +73,37 @@ pub fn check_dirs(mods_directory: &String) -> Result<Vec<String>, Box<dyn Error>
             if entry.file_name() == "ModInfo.xml" {
                 let dir = Path::new(&directory);
 
-                let mods_path = Path::new(&mods_directory);
+                let mods_path = Path::new(mods_directory);
                 dir::move_dir(dir, mods_path, &copy_options)?;
 
                 break;
             }
         }
-
-        dirs_vec.push(directory)
     }
 
-    Ok(dirs_vec)
+    Ok(())
+}
+
+pub fn scan_game_mods(game_mods_directory: &String) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut mods_vector = Vec::new();
+    let mods_directory = dir::get_dir_content(game_mods_directory)?;
+
+    for directory in mods_directory.directories {
+        if directory.contains("Config") {
+            continue;
+        }
+
+        println!("Current mod: {directory}");
+
+        for file in fs::read_dir(&directory)? {
+            let entry = file?;
+            if entry.file_name() == "ModInfo.xml" {
+
+            }
+        }
+    }
+
+    Ok(mods_vector)
 }
 
 pub fn extract_zips(zip_files: &Vec<File>) {

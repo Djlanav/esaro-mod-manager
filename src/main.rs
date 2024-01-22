@@ -1,5 +1,4 @@
 mod mod_installation;
-mod management;
 mod utils;
 
 use std::error::Error;
@@ -11,8 +10,6 @@ use std::path::{Path, PathBuf};
 use dialog::DialogBox;
 use eframe::egui::{Color32, Context, RichText};
 use eframe::{egui, Frame};
-use std::sync::mpsc;
-use crate::management::ExtraWindow;
 
 const SAVED_DIRECTORY: &str = "7daystodie_path.txt";
 const SIZE_AND_ADD_SPACE_AMOUNT: f32 = 20.0;
@@ -22,29 +19,11 @@ enum MatchesGameDirectory {
     NoMatch
 }
 
-fn check_directory_match(directory: &PathBuf) -> MatchesGameDirectory {
-    if directory.to_str().unwrap().contains("7 Days To Die") {
-        MatchesGameDirectory::Match
-    } else {
-        MatchesGameDirectory::NoMatch
-    }
-}
-
-fn load_saved_directory() -> Result<String, Box<dyn Error>> {
-    let mut cache_file = File::open(SAVED_DIRECTORY)?;
-    let mut directory_string = String::new();
-
-    cache_file.read_to_string(&mut directory_string)?;
-
-    Ok(directory_string)
-}
-
 struct ModManager {
     directory_string: String,
     directory_found: bool,
-    windows: Vec<Box<dyn ExtraWindow>>,
-    vector_string_channels: HashMap<String, (mpsc::Sender<String>, mpsc::Receiver<String>)>
-    // mods: Vec<Mod>,
+    vector_string_channels: HashMap<String, (crossbeam_channel::Sender<Vec<String>>, crossbeam_channel::Receiver<Vec<String>>)>,
+    //mods: Vec<Mod>
 }
 
 impl ModManager {
@@ -52,7 +31,7 @@ impl ModManager {
         let dir_found;
 
         Self {
-            directory_string: match load_saved_directory() {
+            directory_string: match utils::load_saved_directory() {
                 Ok(dir) => {
                     dir_found = true;
                     dir
@@ -64,9 +43,8 @@ impl ModManager {
                 }
             },
             directory_found: dir_found,
-            windows: Vec::new(),
-            vector_string_channels: HashMap::new()
-            // mods: Vec::new(),
+            vector_string_channels: HashMap::new(),
+           //mods: Vec::new()
         }
     }
 
@@ -106,7 +84,7 @@ impl eframe::App for ModManager {
                         None => return
                     };
 
-                    match check_directory_match(&directory) {
+                    match utils::check_directory_match(&directory) {
                         MatchesGameDirectory::Match => {}
                         MatchesGameDirectory::NoMatch => {
                             dialog::Message::new("Wrong directory to 7 Days To Die")
@@ -134,64 +112,68 @@ impl eframe::App for ModManager {
                     None => return
                 };
 
-                // let mods_vector_channel = mpsc::channel();
+                let (vector_send, vector_recv) = crossbeam_channel::unbounded();
 
-                let (mods_tx, mods_rx) = crossbeam_channel::unbounded();
-                // Scoped thread version
                 thread::scope(|scoped_spawner| {
                    scoped_spawner.spawn(|| {
                        let vectors = mod_installation::create_zip_vectors(&mod_paths);
 
-                       mods_tx.send(vectors).expect("Failed to send data!");
+                       vector_send.send(vectors).expect("Failed to send data!");
                    });
 
-                    // Extraction thread
-                    scoped_spawner.spawn(|| {
-                       let (zip_files, _zip_paths) = mods_rx.recv().unwrap();
+                });// end of scope
 
-                        dialog::Message::new("About to install mods. The mod manager may freeze for a few moments.")
-                            .title("Installing mods")
-                            .show()
-                            .unwrap();
-                       mod_installation::extract_zips(&zip_files);
+                let mods_list_channel = crossbeam_channel::unbounded();
+                self.vector_string_channels.insert("Mods List".to_string(), mods_list_channel);
 
-                        // Match block start
-                        let mod_directories_vector = match mod_installation::check_dirs(&self.directory_string) {
-                            Ok(vec) => vec,
-                            Err(e) => {
-                                let message = format!("An error occurred when moving the extracted mod folders into the main game directory.\n
+                let mods_list_send1 = self.vector_string_channels.get("Mods List").unwrap().clone().0;
+                let directory_string_clone = self.directory_string.clone();
+
+                make_named_thread!("Extract Zips").spawn(move || {
+                    let directory_string = directory_string_clone;
+                    let (zip_files, _zip_paths) = vector_recv.recv().unwrap();
+
+                    dialog::Message::new("About to install mods. The mod manager may freeze for a few moments.")
+                        .title("Installing mods")
+                        .show()
+                        .unwrap();
+                    mod_installation::extract_zips(&zip_files);
+
+                    if let Err(e) = mod_installation::check_dirs(&directory_string) {
+                        let message = format!("An error occurred when moving the extracted mod folders into the main game directory.\n
                         The error: {e}");
 
-                                utils::zips_temp_exists(|zips_path| fs::remove_dir_all(zips_path).unwrap());
-                                utils::write_to_panic_output(message.as_str()).unwrap();
-                                panic!("{}", message);
-                            }
-                        }; // Match block end
+                        utils::zips_temp_exists(|zips_path| fs::remove_dir_all(zips_path).unwrap());
+                        utils::write_to_panic_output(message.as_str()).unwrap();
+                        panic!("{}", message);
+                    }
 
-                        utils::zips_temp_exists(|mods_path| fs::remove_dir_all(mods_path).unwrap());
-                        dialog::Message::new("The mods have been successfully installed.")
-                            .title("Installation status")
-                            .show()
-                            .unwrap();
+                    utils::zips_temp_exists(|mods_path| fs::remove_dir_all(mods_path).unwrap());
+                    dialog::Message::new("The mods have been successfully installed.")
+                        .title("Installation status")
+                        .show()
+                        .unwrap();
+
+                    let mods_vector = mod_installation::scan_game_mods(&directory_string).unwrap_or_else(|e| {
+                        let mut single_element_vec = Vec::new();
+                        single_element_vec.push(String::from("Mods list could not be loaded/displayed"));
+
+                        single_element_vec
                     });
-                });
+
+                   mods_list_send1.send(mods_vector).unwrap();
+                }).expect("Failed to spawn thread!");
             }
             // ** End of "Install mods" button code **
 
             ui.add_space(SIZE_AND_ADD_SPACE_AMOUNT);
             if ui.button(RichText::new("Show installed mod(s)").size(SIZE_AND_ADD_SPACE_AMOUNT)).clicked() {
+                let mods_vector = mod_installation::scan_game_mods(&self.directory_string).unwrap_or_else(|e| {
+                    let mut single_element_vec = Vec::new();
+                    single_element_vec.push(String::from("Mods list could not be loaded/displayed"));
 
-            }
-
-           /* ui.add_space(ADD_SPACE_AMOUNT);
-            if ui.button(RichText::new("Click me!").size(ADD_SPACE_AMOUNT)).clicked() {
-                let new_window = Box::new(MultipleDirectoriesWindow::make("Test window", ctx.clone()));
-
-                self.windows.push(new_window);
-            } */
-
-            for window in self.windows.iter_mut() {
-                window.show();
+                    single_element_vec
+                });
             }
         });
     }
